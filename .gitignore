@@ -1,0 +1,11 @@
+.idea/
+__pycache__/
+venv/
+dataset/
+examples/
+
+build_face_dataset.py
+encode_faces.py
+encodings.pickle
+recognize_faces_image.py
+recognize_faces_video.py
