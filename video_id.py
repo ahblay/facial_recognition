@@ -8,6 +8,9 @@ import pyttsx3
 import os
 import time
 from itertools import groupby
+from imutils import paths
+from ntpath import basename
+from multiprocessing import Process
 
 
 class Recognizer():
@@ -214,7 +217,7 @@ class Recognizer():
                 os.remove(f"{path}/{file}")
         return
 
-    def capture_data(self, frame, output_paths, max_photos=20):
+    def capture_data(self, frame, output_paths):
         """
         Captures a photo and saves it to directory(ies) associated with individuals in the photo
 
@@ -239,16 +242,66 @@ class Recognizer():
                 os.makedirs(path)
             except FileExistsError:
                 pass
-            p = os.path.sep.join([path, "{}.png".format(str(time.time()))])
-
-            # TODO: takes forever. Try creating a new thread for deleting photos and training the algorithm on new data
-            # If number of photos exceeds max_photos, removes extraneous photos
-            if len(os.listdir(path)) > max_photos:
-                self.clean_up_photos(path)
+            p = os.path.sep.join([path, "n_{}.png".format(str(time.time()))])
 
             # Saves photo to appropriate directory
             cv2.imwrite(p, frame)
         print("Captured photo.")
+        return
+
+    def train_alg(self, path_to_data):
+        # grab the paths to the input images in our dataset
+        print("[INFO] quantifying faces...")
+        image_paths = [i for i in list(paths.list_images(path_to_data)) if basename(i)[0] == "n"]
+        print(image_paths)
+
+        # initialize the list of known encodings and known names
+        known_encodings = []
+        known_names = []
+
+        # loop over the image paths
+        for (i, image_path) in enumerate(image_paths):
+            # extract the person name from the image path
+            print("[INFO] processing image {}/{}".format(i + 1, len(image_paths)))
+            name = image_path.split(os.path.sep)[-2]
+
+            # load the input image and convert it from BGR (OpenCV ordering)
+            # to dlib ordering (RGB)
+            image = cv2.imread(image_path)
+            rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
+            # detect the (x, y)-coordinates of the bounding boxes
+            # corresponding to each face in the input image
+            boxes = face_recognition.face_locations(rgb, model="hog")
+
+            # compute the facial embedding for the face
+            encodings = face_recognition.face_encodings(rgb, boxes)
+
+            # loop over the encodings
+            for encoding in encodings:
+                # add each encoding + name to our set of known names and
+                # encodings
+                known_encodings.append(encoding)
+                known_names.append(name)
+
+            renamed = "/".join(image_path.split(os.path.sep)[:-1]) + "/" + image_path.split(os.path.sep)[-1][2:]
+            print(renamed)
+            os.rename(image_path, renamed)
+
+        # TODO: make sure that data is being edited and stored properly and functionally
+        data = self.open_encodings("/users/abel/desktop/face_recognition/encodings.pickle")
+        data["encodings"].extend(known_encodings)
+        data["names"].extend(known_names)
+
+        # dump the facial encodings + names to disk
+        print("[INFO] serializing encodings...")
+        f = open("/users/abel/desktop/face_recognition/encodings.pickle", "wb")
+        f.write(pickle.dumps(data))
+        f.close()
+
+        # TODO: handle photo deletion if directories are bloated
+        '''if len(os.listdir(path)) > max_photos:
+            self.clean_up_photos(path)'''
         return
 
     def run(self, min_area=500, wait=2, max_photos=5):
@@ -276,7 +329,7 @@ class Recognizer():
             Unpickled data as JSON
         """
 
-        # Initializes text-to-speak engine, opens facial encoding data, initialized video stream, and sets flags for
+        # Initializes text-to-speak engine, opens facial encoding data, initializes video stream, and sets flags for
         # motion detection, recognized faces and photos captured.
         engine = pyttsx3.init()
         data = self.open_encodings("encodings.pickle")
@@ -294,6 +347,8 @@ class Recognizer():
 
             # Checks frames for motion detection
             while empty:
+                # TODO: run separate process for training algorithm
+
                 frame = vs.read()
                 frame = imutils.resize(frame, width=500)
                 gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
